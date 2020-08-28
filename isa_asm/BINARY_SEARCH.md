@@ -23,24 +23,24 @@ int xnoinline binary_search(int * seq, int len, int const & v){
 
 ### Asm of MixC Micro
 - 20 条指令
-- 42 字节
+- 40 字节
 ```ASM
 proc binary_search(r1.seq, r2.len, r3.ref_v):
-    lddx        r5.v_v, [r3.ref_v]              | 2
+    lddx        r4.v_v, [r3.ref_v]              | 2
     movqix      r3.i_left, 0                    | 2
     movqqx      r0.i_center, r2.len             | 2
     sft         r0.i_center, r0.i_center, 1     | 2
     sub         r2.i_right, r2.i_right, 1       | 2
 lp.0:                                           | 2
     ifle        r3.i_left, r2.i_right, lp.0     | 2
-    add         rt, r1.seq, r0.i_center * 4     | 4
-    lddx        v_center, [rt]                  | 2
-    ifgt        v_center, v_v, if.0             | 2
+    sft         rt, r0.i_center, -2             | 2
+    lddx        r5.v_center, [r1.seq + rt]      | 2
+    ifgt        r5.v_center, r4.v_v, if.0       | 2
     movqq       r2.i_right, r0.i_center         | 2
     sub         r2.i_right, r2.i_right, 1       | 2
     jmp         if.1                            | 2
 if.0:                                           | 2
-    iflt        if.1                            | 2
+    iflt        el.1                            | 2
     movqqx      r3.i_left, r0.i_center          | 2
     add         r3.i_left, r3.i_left, 1         | 2
 if.1:                                           | 2
@@ -49,7 +49,7 @@ if.1:                                           | 2
     jmp         lp.0                            | 2
 el.0:                                           | 2
     movqix      r0.i_center, -1                 | 2
-ei.0:                                           | 2
+el.1:                                           | 2
     ret                                         | 2
 
 
@@ -62,7 +62,7 @@ if.0: -------+-- 合并，并且下一条 eixx 属于第 0 个 if，每个 ifxx 
     eixx if.1
 if.1
 
-适合
+- ldxx/stxx 支持隐式的 rt 操作数
 ```
 
 ### Asm of Arm Cortex-M Thumb
