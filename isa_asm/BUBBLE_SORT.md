@@ -1,7 +1,7 @@
 ## BUBBLE_SORT
 ### C++ Source
 ```C++
-void xnoinline bubble_sort(const int * ary, int len){
+void xnoinline bubble_sort(int * ary, int len){
     for(int i = 0; i < len; i++){
         for(int j = 1, max_i = 0; ; j++){
             if (j == len - i){
@@ -97,6 +97,7 @@ el.0:                                                   |
 - 73 字节
 
 ```ASM
+159f <_Z11bubble_sortPii>:
 159f: 89 d0                     mov    %edx,%eax
 15a1: 41 89 d0                  mov    %edx,%r8d
 15a4: 41 29 c0                  sub    %eax,%r8d
