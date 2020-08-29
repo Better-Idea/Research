@@ -15,7 +15,7 @@ void xnoinline daxpy(uxx n, f32 a, cf32 x[], f32 y[]){
 ```ASM
 proc daxpy(r0.n, s1.a, r2.p_x, r3.p_y):
     movqq   rt, r0.n                                | 2
-lp.0:                                               | 2
+lp.0:                                               |
     sub     rt, rt, 4                               | 2
     ifge    el.0                                    | 2
     lds     s4.v_x, [r2.p_x + rt]                   | 2
@@ -24,7 +24,7 @@ lp.0:                                               | 2
     add     s5.v_y, s5.v_y, s4.v_x                  | 2
     stq     s5.v_y, [r2.p_y + rt]                   | 2
     jmp     lp.0                                    | 2
-el.0:                                               | 2
+el.0:                                               |
     ret                                             | 2
 ```
 

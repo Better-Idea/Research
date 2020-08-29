@@ -31,7 +31,7 @@ proc binary_search(r1.seq, r2.len, r3.ref_v):
     movqqx      r0.i_center, r2.len             | 2
     sft         r0.i_center, r0.i_center, 1     | 2
     sub         r2.i_right, r2.i_right, 1       | 2
-lp.0:                                           | 2
+lp.0:                                           |
     ifle        r3.i_left, r2.i_right, lp.0     | 2
     sft         rt, r0.i_center, -2             | 2
     lddx        r5.v_center, [r1.seq + rt]      | 2
@@ -39,17 +39,17 @@ lp.0:                                           | 2
     movqq       r2.i_right, r0.i_center         | 2
     sub         r2.i_right, r2.i_right, 1       | 2
     jmp         if.1                            | 2
-if.0:                                           | 2
+if.0:                                           |
     iflt        el.1                            | 2
     movqqx      r3.i_left, r0.i_center          | 2
     add         r3.i_left, r3.i_left, 1         | 2
-if.1:                                           | 2
+if.1:                                           |
     add         rt, r3.i_left, r2.i_right       | 2
     sft         r0.i_center, rt, 1              | 2
     jmp         lp.0                            | 2
-el.0:                                           | 2
+el.0:                                           |
     movqix      r0.i_center, -1                 | 2
-el.1:                                           | 2
+el.1:                                           |
     ret                                         | 2
 
 
