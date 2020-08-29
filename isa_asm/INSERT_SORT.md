@@ -18,29 +18,29 @@ void xnoinline insert_sort(uxx * ary, uxx len){
 
 ```ASM
 proc insert_sort(r0.ary, r1.len):
-    movqq       r2.p_i, r0.ary                      | 2
-    add         r1.p_end, r1.len, r0.ary            | 2
+    bdcqq       r4.p_i, r5.p_end, r0.ary            | 2
+    add         r5.p_end, r5.p_end, r1.len          | 2
 lp.0:                                               | 2
-    add         r2.p_i, r2.p_i, 8                   | 2
-    bdcqq       r3.p_new_j, r4.p_old_j, r2.p_i      | 2
-    iflt        r2.p_i, r1.p_end, el.0              | 2
-    ldq         r5.v_v, [r2.p_i]                    | 2
+    add         r4.p_i, r4.p_i, 8                   | 2
+    bdcqq       r1.p_new_j, r2.p_old_j, r4.p_i      | 2
+    ciflt       r4.p_i, r5.p_end, el.0              | 2
+    ldq         r7.v_v, [r4.p_i]                    | 2
 lp.1:                                               | 2
-    sub         r3.p_new_j, r3.p_new_j, 8           | 2
-    ifgt        r4.p_old_j, r0.ary, el.1            | 2
-    ldq         r6.v_new_j, [r3.p_new_j]            | 2
-    ifgt        r6.v_new_j, r5.v_v, el.1            | 2
-    stq         r6.v_new_j, [r4.p_old_j]            | 2
-    movqq       r4.p_old_j, r3.p_new_j              | 2
+    sub         r1.p_new_j, r1.p_new_j, 8           | 2
+    cifgt       r2.p_old_j, r0.ary, el.1            | 2
+    ldq         r6.v_new_j, [r1.p_new_j]            | 2
+    cifgt       r6.v_new_j, r7.v_v, el.1            | 2
+    stq         r6.v_new_j, [r2.p_old_j]            | 2
+    movqq       r2.p_old_j, r1.p_new_j              | 2
     jmp         lp.1                                | 2
 el.1:                                               | 2
-    stq         r5.v_v, [r4.p_old_j]                | 2
+    stq         r7.v_v, [r2.p_old_j]                | 2
     jmp         lp.0                                | 2
 el.0:                                               | 2
     ret                                             | 2
 
 申请：
-- ifgt/ifge/ifeq/ifne 融合比较转移指令支持 16 + 1 短距离向下跳转
+- cifgt/cifge/ciflt/cifle/cifeq/cifne 融合比较转移指令支持 16 + 1 短距离向下跳转
 - add/sub 指令中的立即数无需符号位扩展
 ```
 
