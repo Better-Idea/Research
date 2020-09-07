@@ -107,8 +107,6 @@ key1:val                                                                        
                                                                                                                     | 14    ignore
                                                                                                                     | 15    ignore
 
-```
-
 三数加法器：
 Ax Bx Cx R1 R0
 0  0  0  0  0
@@ -120,6 +118,8 @@ Ax Bx Cx R1 R0
 1  1  0  1  0
 1  1  1  1  1
 ...
+
+```
 
 
 ## 传输门构成进位链
@@ -179,5 +179,96 @@ Ax Bx Cx R1 R0
             +----[t-g]------------|------------------+--------[t-g]----|---------------------+
             |                     |                  |                 |                     |
 ------------+----[t-g]------------+----[t-g]---------+--------[t-g]----+------------[t-g]----+------------
+
+```
+
+
+## 迭代一致化加法器
+
+```C++
+// 复杂度：
+// - log2(bit_width)
+
+#define xuser mixc::none
+#include"define/base_type.hpp"
+#include"math/random.hpp"
+
+struct x08{
+    u08  l : 4;
+    u08  h : 4;
+    x08(){}
+    x08(u08 v){
+        *u08p(this) = v;
+    }
+};
+
+int main(){
+    using namespace xuser::inc;
+
+    u32 a       = random<u32>();
+    u32 b       = random<u32>();
+
+    x08 * ap    = (x08 *) & a;
+    x08 * bp    = (x08 *) & b;
+
+    x08 c0a     = ap[0].l + bp[0].l;
+    x08 c0b     = ap[0].l + bp[0].l + 1;
+
+    x08 c1a     = ap[0].h + bp[0].h;
+    x08 c1b     = ap[0].h + bp[0].h + 1;
+
+    x08 c2a     = ap[1].l + bp[1].l;
+    x08 c2b     = ap[1].l + bp[1].l + 1;
+
+    x08 c3a     = ap[1].h + bp[1].h;
+    x08 c3b     = ap[1].h + bp[1].h + 1;
+
+    x08 c4a     = ap[2].l + bp[2].l;
+    x08 c4b     = ap[2].l + bp[2].l + 1;
+
+    x08 c5a     = ap[2].h + bp[2].h;
+    x08 c5b     = ap[2].h + bp[2].h + 1;
+
+    x08 c6a     = ap[3].l + bp[3].l;
+    x08 c6b     = ap[3].l + bp[3].l + 1;
+
+    x08 c7a     = ap[3].h + bp[3].h;
+    x08 c7b     = ap[3].h + bp[3].h + 1;
+
+    u32 x       = a + b;
+    x08 cfx     = 0;
+    x08 c0c     = cfx.h ? c0b : c0a;
+    x08 c1c     = c0c.h ? c1b : c1a;
+
+    c3a         = c2a.h ? c3b : c3a;
+    c3b         = c2b.h ? c3b : c3a;
+
+    //c4a / c4b
+    c5a         = c4a.h ? c5b : c5a;
+    c5b         = c4b.h ? c5b : c5a;
+
+    //c6a / c6b
+    c7a         = c6a.h ? c7b : c7a;
+    c7b         = c6b.h ? c7b : c7a;
+
+    x08 c2c     = c1c.h ? c2b : c2a;
+    x08 c3c     = c1c.h ? c3b : c3a;
+    x08 c4c     = c3c.h ? c4b : c4a;
+
+    c6a         = c5a.h ? c6b : c6a;
+    c6b         = c5b.h ? c6b : c6a;
+
+    c7a         = c5a.h ? c7b : c7a;
+    c7b         = c5b.h ? c7b : c7a;
+
+    x08 c5c     = c4c.h ? c5b : c5a;
+    x08 c6c     = c4c.h ? c6b : c6a;
+    x08 c7c     = c4c.h ? c7b : c7a;
+
+    u32 w       = 
+        c0c.l       | c1c.l <<  4 | c2c.l <<  8 | c3c.l << 12 | 
+        c4c.l << 16 | c5c.l << 20 | c6c.l << 24 | c7c.l << 28;
+    return 0;
+}
 
 ```
