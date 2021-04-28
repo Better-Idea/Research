@@ -209,16 +209,19 @@ loop.end.1:
     rcv.emit        a0.attr, a1.stacksize
     xor             a3.j, a3.j
 
-    snew.fetch      8
+    snew            8
     movqq           a1.attr, a0.attr
     movqq           a0.thread, rt
 
     imm
     bdcqi           bio_threads, imm
+
+    imm
+    bdcqi           a2.bioProcessBackgroundJobs, bioProcessBackgroundJobs
 loop.begin.2:
     cmp             a3.j, 3
     iflt            loop.end.2
-    keep            a0.thread, a1.attr, a3.j, bio_threads
+    keep            a0.thread, a1.attr, a2.bioProcessBackgroundJobs, a3.j, bio_threads
     imm
     jal             pthread_create
     rcv.emit        a0.thread, a1.attr, a3.j, bio_threads
