@@ -245,3 +245,81 @@ if.0:
 loop.end.2:
     ret
 ```
+
+## C 源码
+```C
+struct bio_job {
+    time_t time; /* Time at which the job was created. */
+    /* Job specific arguments.*/
+    int fd; /* Fd for file based background jobs */
+    lazy_free_fn *free_fn; /* Function that will free the provided arguments */
+    void *free_args[]; /* List of arguments to be passed to the free function */
+};
+
+void bioSubmitJob(int type, struct bio_job *job) {
+    job->time = time(NULL);
+    pthread_mutex_lock(&bio_mutex[type]);
+    listAddNodeTail(bio_jobs[type],job);
+    bio_pending[type]++;
+    pthread_cond_signal(&bio_newjob_cond[type]);
+    pthread_mutex_unlock(&bio_mutex[type]);
+}
+```
+
+## Mix-C ASM
+```
+proc bioSubmitJob:
+    imm
+    bdcqi           bio_mutex, imm
+
+    imm
+    bdcqi           bio_jobs, imm
+
+    imm
+    bdcqi           bio_pending, imm
+
+    imm
+    bdcqi           bio_newjob_cond, imm
+
+    imm
+    mul             rt, a0.type, sizeof(pthread_mutex_t)
+    add             bio_mutex, rt
+
+    shl             rt, a0.type, 3
+    add             bio_jobs, rt
+    add             bio_pending, rt
+
+    imm
+    mul             rt, a0.type, sizeof(pthread_cond_t)
+    add             bio_newjob_cond, rt
+
+    keep.emit       a1.job, bio_mutex, bio_mutex, bio_pending, bio_newjob_cond
+    imm
+    jal             time
+    rcv             a1.job, bio_mutex
+    stq             ret, a1.job:time
+
+    movqq           a0.bio_mutex, bio_mutex
+    imm
+    jal             pthread_mutex_lock
+    rcv             a1.job, bio_jobs
+
+    movqq           a0.bio_jobs, bio_jobs
+    imm
+    bdcqi           bio_newjob_cond, imm
+    ldq             bio_pending_v, [bio_pending]
+    add             bio_pending_v, 1
+    stq             bio_pending_v, [bio_pending]
+
+    rcv             bio_new_job_cond
+    movqq           a0.bio_new_job_cond, bio_new_job_cond
+    imm
+    jal             pthread_cond_signal
+
+    rcv             bio_mutex
+    movqq           a0.bio_mutex, bio_mutex
+    imm
+    jal             pthread_mutex_unlock
+    ret
+
+```
