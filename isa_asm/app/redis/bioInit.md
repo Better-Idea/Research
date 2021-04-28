@@ -35,9 +35,9 @@ void *bioProcessBackgroundJobs(void *arg);
 
 /* Initialize the background system, spawning the thread. */
 void bioInit(void) {
-    pthread_attr_t attr;
+    pthread_attr_t a0.attr;
     pthread_t thread;
-    size_t stacksize;
+    size_t a1.stacksize;
     int j;
 
     /* Initialization of state vars and objects */
@@ -50,18 +50,18 @@ void bioInit(void) {
     }
 
     /* Set the stack size as by default it may be small in some system */
-    pthread_attr_init(&attr);
-    pthread_attr_getstacksize(&attr,&stacksize);
-    if (!stacksize) stacksize = 1; /* The world is full of Solaris Fixes */
-    while (stacksize < REDIS_THREAD_STACK_SIZE) stacksize *= 2;
-    pthread_attr_setstacksize(&attr, stacksize);
+    pthread_attr_init(&a0.attr);
+    pthread_attr_getstacksize(&a0.attr,&a1.stacksize);
+    if (!a1.stacksize) a1.stacksize = 1; /* The world is full of Solaris Fixes */
+    while (a1.stacksize < REDIS_THREAD_STACK_SIZE) a1.stacksize *= 2;
+    pthread_attr_setstacksize(&a0.attr, a1.stacksize);
 
     /* Ready to spawn our threads. We use the single argument the thread
      * function accepts in order to pass the job ID the thread is
      * responsible of. */
     for (j = 0; j < BIO_NUM_OPS; j++) {
         void *arg = (void*)(unsigned long) j;
-        if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
+        if (pthread_create(&thread,&a0.attr,bioProcessBackgroundJobs,arg) != 0) {
             serverLog(LL_WARNING,"Fatal: Can't initialize Background Jobs.");
             exit(1);
         }
@@ -81,8 +81,8 @@ proc bioInit:
     # bdcqi 中 imm.bio_mutex 包含高 4bit
     # bio_mutex 在 C 源代码中是全局静态数组
     # 在 Mix-C ISA 中，全局变量是放在主线程栈上
-    # 栈寄存器位 64bit 无符号数，其中高 32bit 为段 id，低 32bit 为偏移
-    # 访问主栈时，可以小消去段 id，让寄存器高 32bit 设置为 0
+    # 栈寄存器为 64bit 无符号数，其中高 32bit 为段 id，低 32bit 为偏移
+    # 访问主栈时，可以消去段 id，让寄存器高 32bit 设置为 0
     # 在低 32bit 中，若第 31bit(0 based) 为 0，表示访问主栈，为 1 表示访问线程本地栈
     # 这里预估全局变量的总体积在 64K 以内
     imm
@@ -97,11 +97,11 @@ proc bioInit:
     imm
     bdcqi           bio_jobs, imm.bio_jobs
 
-loop.begin
+loop.begin.0
     # keep 是本 ISA 候选的指令
     # 具有 keep 和 keep.emit 两个版本
-    # keep 将相当于惰性保存各个寄存器但不递增缓冲区指针，再调用 keep 时会覆盖旧值
-    # keep.emit 是再 keep 的基础上改变缓冲区指针
+    # keep 将相当于惰性保存各个寄存器但不递增上下文指针，再调用 keep 时会覆盖旧值
+    # keep.emit 是在 keep 的基础上改变缓冲区指针
     keep.emit       j, bio_mutex, bio_newjob_cond, bio_step_cond, bio_jobs
 
     # 设置参数 0
@@ -110,18 +110,18 @@ loop.begin
     # 设置参数 1
     xor             a1.null, a1.null
 
-    # 调用
-    imm
+    # jal 中转移地址中第 0 位为 1 表示到全局函数列表中查找函数地址
+    # 可以适用于动态库加载
     imm
     jal             pthread_mutex_init
 
     # rcv 是本 ISA 候选的指令
     # rcv 全称为 recover
-    # 和 keep 互逆，也具有 rcv 和 rcv.emit 两个版本
+    # 和 keep 互逆，但具有 rcv、 rcv.emit 和 rcv.nop 三个版本
+    # rcv.nop 清除保存了但不需要再恢复的寄存器上下文
     rcv             bio_newjob_cond
     movqq           a0.bio_newjob_cond, bio_newjob_cond
     xor             a1.null, a1.null
-    imm
     imm
     jal             pthread_cond_init
 
@@ -129,12 +129,10 @@ loop.begin
     movqq           a0.bio_step_cond, bio_step_cond
     xor             a1.null, a1.null
     imm
-    imm
     jal             pthread_cond_init
 
     rcv.emit        j, bio_mutex, bio_newjob_cond, bio_step_cond, bio_jobs
 
-    # 相关性较强的函数会被放到一个 64K 区域
     imm
     jal             listCreate
 
@@ -142,8 +140,13 @@ loop.begin
     stq             ret.listCreate, bio_jobs
 
     sub             j, 1
-    ifnz            loop.end
 
+    # 类似 if (sta.zf == 0)
+    # 如果条件满足，就执行下面的逻辑，否则跳转到 loop.end.0
+    ifnz            loop.end.0
+
+    # 48 需要 5bit 才能存储，其中 imm 提供低 12bit，add 中提供高 4bit
+    # 其中 11bit 未用到
     imm
     add             bio_mutex, 48
 
@@ -154,47 +157,67 @@ loop.begin
     add             bio_step_cond, 40
 
     add             bio_jobs, sizeof(voidp)
-    jmp             loop.begin
-loop.end:
-    snew.fetch      56
-    movqq           attr, rt
-    snew.fetch      8
-    movqq           stacksize, rt
-    keep            attr, stacksize
+    jmp             loop.begin.0
+loop.end.0:
+    # snew 是本 ISA 候选指令
+    # 用于从栈上分配内存，本 ISA 中栈是向高地址生长的
+    # 先将当前栈地址赋值给 rt 临时寄存器，然后将栈地址递增
+    # 栈内存的分配单位为 8 字节，本次分配 7 * 8 字节内存
+    snew            7
+
+    # a0.attr = rt
+    movqq           a0.attr, rt
+    snew            8
+    movqq           a1.stacksize, rt
+    keep.emit       a0.attr, a1.stacksize
+
     imm
     jal             pthread_attr_init
-    rcv             attr, stacksize
+    rcv             a0.attr, a1.stacksize
+
     imm
     jal             pthread_attr_getstacksize
-    rcv             attr, stacksize
-    ldq             stacksize, [stacksize]
-    bdcqi           one, 1
-    miax            one, stacksize
+    rcv.emit        a0.attr, a1.stacksize
 
+    # 从栈内存中加载到寄存器
+    ldq             a1.stacksize, [a1.stacksize]
+
+    # 赋值立即数
+    bdcqi           one, 1
+
+    # 比较并设置最大最小值
+    # 最小值放到 one，最大值放到 a1.stacksize
+    miax            one, a1.stacksize
+
+    # REDIS_THREAD_STACK_SIZE = 1024*1024*4
     imm
     imm
     bdcqi           REDIS_THREAD_STACK_SIZE, imm
-loop.begin.2:
-    ciflt           stacksize, REDIS_THREAD_STACK_SIZE, loop.end.2
-    shl             stacksize, 1
-    jmp             loop.begin.2
-loop.end.2:
-    rcv             attr
+loop.begin.1:
+    # 仅用于寄存器间带转移比较指令
+    # if (a1.stacksize < REDIS_THREAD_STACK_SIZE)
+    ciflt           a1.stacksize, REDIS_THREAD_STACK_SIZE, loop.end.1
+
+    # 左移 1bit
+    shl             a1.stacksize, 1
+    jmp             loop.begin.1
+loop.end.1:
+    rcv             a0.attr
     imm
     jal             pthread_attr_setstacksize
 
-    rcv.emit.c      attr
+    rcv.emit        a0.attr, a1.stacksize
     xor             a3.j, a3.j
 
     snew.fetch      8
+    movqq           a1.attr, a0.attr
     movqq           a0.thread, rt
-    movqq           a1.attr, attr
 
     imm
     bdcqi           bio_threads, imm
-loop.begin.3:
+loop.begin.2:
     cmp             a3.j, 3
-    iflt            loop.end.3
+    iflt            loop.end.2
     keep            a0.thread, a1.attr, a3.j, bio_threads
     imm
     jal             pthread_create
@@ -204,7 +227,7 @@ loop.begin.3:
     ifne            if.0
     movqqx          a0, 3
     imm
-    bdcqi           a1, imm
+    bdcqi           a1, string
     imm
     jal             serverLog
     movqqx          a0, 1
@@ -212,10 +235,10 @@ loop.begin.3:
     jal             exit
 if.0:
     ldq             rt, [a0.thread]
-    stq             rt, [p_bio_threads]
+    stq             rt, [bio_threads]
     add             j, 1
-    add             p_bio_threads, 8
-    jmp             loop.begin.3
-loop.end.3:
+    add             bio_threads, 8
+    jmp             loop.begin.2
+loop.end.2:
     ret
 ```
