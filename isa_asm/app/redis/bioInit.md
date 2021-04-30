@@ -267,7 +267,7 @@ void bioSubmitJob(int type, struct bio_job *job) {
 ```
 
 ## Mix-C ASM
-```
+```asm
 proc bioSubmitJob:
     imm
     bdcqi           bio_mutex, imm
@@ -346,7 +346,7 @@ void bioCreateLazyFreeJob(lazy_free_fn free_fn, int arg_count, ...) {
 ```
 
 ## Mix-C ISA
-```
+```asm
 proc bioCreateLazyFreeJob:
     # keep 指令占用的空间是独立于栈内存
     keep.emit       a0.free_fn, a1.arg_count
@@ -354,18 +354,22 @@ proc bioCreateLazyFreeJob:
     imm
     add             rt.bytes, rt.arg_count, sizeof(bio_job)
     movqq           a0.bytes, rt.bytes
+    imm
     jal             zmalloc
     rcv.emit        a0.free_fn, a1.arg_count
+
+    # 参数从 r0 向 r15 方向排列，返回值从 r15 向 r0 方向排列
+    bdcqq           job.free_fn, job.free_args, rt.job
     imm
-    add             job.free_fn, ret.job, 16
+    add             job.free_fn, 16
     imm
-    add             job.free_args, ret.job, 24
+    add             job.free_args, 24
     stq             a0.free_fn, [job.free_fn]
 
     # 读取栈帧地址，栈是向高地址生长的
     rdstk           valist
 loop.begin,0:
-    sub             arg_count, 1
+    sub             a1.arg_count, 1
     ifge            loop.end.0
     ldq             rt, [vallist]
     stq             rt, [job.free_args]
@@ -374,8 +378,299 @@ loop.begin,0:
 loop.end.0:
     movqqx          a0.BIO_LAZY_FREE, 2
     movqq           a1.job, ret.job
+    imm
     jal             bioSubmitJob
     ret
 ```
 
+## C 源码
+```C
+void bioCreateCloseJob(int fd) {
+    struct bio_job *job = zmalloc(sizeof(*job));
+    job->fd = fd;
 
+    bioSubmitJob(BIO_CLOSE_FILE, job);
+}
+
+// 仅仅 BIO_AOF_FSYNC 参数不同，不再赘述
+void bioCreateFsyncJob(int fd) {
+    struct bio_job *job = zmalloc(sizeof(*job));
+    job->fd = fd;
+
+    bioSubmitJob(BIO_AOF_FSYNC, job);
+}
+```
+
+## Mix-C ISA
+```asm
+proc bioCreateCloseJob:
+    keep.emit       a0.fd
+    imm
+    bdcqi           a0.bytes, sizeof(bio_job)
+    imm
+    jal             zmalloc
+    rvc.emit        a0.fd
+    movqq           a1.job, rt.job
+    add             rt.fd, rt.job, 8
+    stq             a0.fd, [rt.fd]
+    bdcqi           a0.BIO_AOF_FSYNC, 2
+    imm
+    jal             bioSubmitJob
+    ret
+```
+
+## C 源码
+```C
+void *bioProcessBackgroundJobs(void *arg) {
+    struct bio_job *job;
+    unsigned long type = (unsigned long) arg;
+    sigset_t sigset;
+
+    /* Check that the type is within the right interval. */
+    if (type >= BIO_NUM_OPS) {
+        serverLog(LL_WARNING,
+            "Warning: bio thread started with wrong type %lu",type);
+        return NULL;
+    }
+
+    switch (type) {
+    case BIO_CLOSE_FILE:
+        redis_set_thread_title("bio_close_file");
+        break;
+    case BIO_AOF_FSYNC:
+        redis_set_thread_title("bio_aof_fsync");
+        break;
+    case BIO_LAZY_FREE:
+        redis_set_thread_title("bio_lazy_free");
+        break;
+    }
+
+    redisSetCpuAffinity(server.bio_cpulist);
+
+    makeThreadKillable();
+
+    pthread_mutex_lock(&bio_mutex[type]);
+    /* Block SIGALRM so we are sure that only the main thread will
+     * receive the watchdog signal. */
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGALRM);
+    if (pthread_sigmask(SIG_BLOCK, &sigset, NULL))
+        serverLog(LL_WARNING,
+            "Warning: can't mask SIGALRM in bio.c thread: %s", strerror(errno));
+
+    while(1) {
+        listNode *ln;
+
+        /* The loop always starts with the lock hold. */
+        if (listLength(bio_jobs[type]) == 0) {
+            pthread_cond_wait(&bio_newjob_cond[type],&bio_mutex[type]);
+            continue;
+        }
+        /* Pop the job from the queue. */
+        ln = listFirst(bio_jobs[type]);
+        job = ln->value;
+        /* It is now possible to unlock the background system as we know have
+         * a stand alone job structure to process.*/
+        pthread_mutex_unlock(&bio_mutex[type]);
+
+        /* Process the job accordingly to its type. */
+        if (type == BIO_CLOSE_FILE) {
+            close(job->fd);
+        } else if (type == BIO_AOF_FSYNC) {
+            redis_fsync(job->fd);
+        } else if (type == BIO_LAZY_FREE) {
+            job->free_fn(job->free_args);
+        } else {
+            serverPanic("Wrong job type in bioProcessBackgroundJobs().");
+        }
+        zfree(job);
+
+        /* Lock again before reiterating the loop, if there are no longer
+         * jobs to process we'll block again in pthread_cond_wait(). */
+        pthread_mutex_lock(&bio_mutex[type]);
+        listDelNode(bio_jobs[type],ln);
+        bio_pending[type]--;
+
+        /* Unblock threads blocked on bioWaitStepOfType() if any. */
+        pthread_cond_broadcast(&bio_step_cond[type]);
+    }
+}
+
+```
+
+## Mix-C ISA
+```asm
+proc bioProcessBackgroundJobs:
+    cmp             a0.type, 3
+    ifge            if.0
+    bdcqix          a0.LL_WARNING, 3
+    imm
+    bdcqi           a1.warning, imm
+    jal             serverLog
+    xor             rt, rt
+    ret
+if.0:
+    cmp             a0.type, 0
+    ifeq            if.1
+    jmp             sw.0
+if.1:
+    cmp             a0.type, 1
+    ifeq            if.2
+    jmp             sw.1
+if.2:
+    jmp             sw.2
+sw.0:
+    imm
+    bdcqi           a1.title, imm
+    jmp             sw.3
+sw.1:
+    imm
+    bdcqi           a1.title, imm
+    jmp             sw.3
+sw.2:
+    imm
+    bdcqi           a1.title, imm
+sw.3:
+    keep.emit       a0.type, a1.title
+    imm
+    jal             pthread_self
+    rsv.emit        a1.title
+    movqq           a0.id, rt
+    imm
+    jal             pthread_set_name_np
+
+    imm
+    bdcqi           server.bio_cpulist, imm
+    imm
+    jal             redisSetCpuAffinity
+    imm
+    jal             makeThreadKillable
+
+    rsv.emit        a0.type
+    movqq           type, a0.type
+    imm
+    bdcqi           bio_mutex, imm
+
+    imm
+    bdcqi           bio_jobs, imm
+
+    imm
+    bdcqi           bio_newjob_cond, imm
+
+    imm
+    bdcqi           bio_pending, imm
+
+    imm
+    bdcqi           bio_step_cond, imm
+
+    imm
+    mul             rt, type, sizeof(pthread_mutex_t)
+    add             bio_mutex, rt
+
+    imm
+    mul             rt, type, sizeof(pthread_cond_t)
+    add             bio_newjob_cond, rt
+    add             bio_step_cond, rt
+
+    imm
+    shl             rt, type, 3
+    add             bio_jobs, rt
+    add             bio_pending, rt
+
+    keep.emit       bio_jobs, bio_jobs, bio_newjob_cond, bio_pending, bio_step_cond, type
+    movqq           a0.bio_mutex, bio_mutex
+    jal             pthread_mutex_lock
+    snew            sizeof(sigset_t)
+    movqq           a0.sigset, rt
+    keep.emit       a0.sigset
+    jal             sigemptyset
+    rcv             a0.sigset
+    imm
+    bdcqix          a1.SIGALRM, imm
+    imm
+    jal             sigaddset
+    rcv.emit        a0.sigset
+    movqq           a1.sigset, a0.sigset
+    imm
+    bdcqix          a0.SIG_BLOCK, imm
+    bdcqi           a2.NULL, 0
+    jal             pthread_sigmask
+    cmp             rt.ret, 0
+    jne             if.3
+
+    jal             errno
+    ldq             a0.errno, [rt.ret]
+    jal             strerror
+    movqq           a2.strerror, rt.ret
+    bdcqix          a0.LL_WARNING, 3
+    imm
+    bdcqi           a1.warning, imm
+    jal             serverLog
+if.3:
+
+loop.begin.0:
+    rcv             bio_jobs, bio_newjob_cond, bio_mutex
+    imm
+    add             rt.bio_jobs.len, bio_jobs, imm
+    ldq             rt.bio_jobs, [rt.bio_jobs]
+    cmp             rt.bio_jobs, 0
+    ifeq            if.4:
+    movqq           a0.bio_newjob_cond, bio_newjob_cond
+    movqq           a1.bio_mutex, bio_mutex
+    imm
+    jal             pthread_cond_wait
+    jmp             loop.begin.0
+if.4:
+    imm
+    add             rt.bio_jobs.head, bio_jobs, imm
+    ldq             ln, [rt.bio_jobs.head]
+    imm
+    add             rt.job, ln, imm
+    movqq           job, rt.job
+    movqq           a0.bio_mutex, bio_mutex
+    keep.emit       job, ln
+    jal             pthread_mutex_unlock
+    rcv             job, ln, type
+
+    bdcqq           a0.job, job.free_args, job.free_fn, job
+    imm
+    add             a0.job.fd, a0.job, imm
+    cmp             type, 0
+    ifeq            if.5
+    jal             close
+    jmp             if.8
+if.5:
+    cmp             type, 1
+    ifeq            if.6
+    jal             redis_fsync
+    jmp             if.8
+if.6:
+    cmp             type, 2
+    ifeq            if.7
+    movqq           a0.job.free_args, job.free_args
+    imm
+    add             a0.job.free_args, imm
+    imm
+    add             job.free_fn, imm
+    jal             job.free_fn
+if.7:
+if.8:
+    rcv.emit        job
+    movqq           a0.job, job
+    jal             zfree
+    rcv             bio_mutex
+    jal             pthread_mutex_lock
+    rcv             bio_jobs, ln
+    movqq           a0.bio_jobs, bio_jobs
+    movqq           a1.ln, ln
+    jal             listDelNode
+    rcv             bio_pending, bio_step_cond
+    ldq             rt.bio_pending, [bio_pending]
+    add             rt.bio_pending, 1
+    stq             rt.bio_pending, [bio_pending]
+    movqq           a0.bio_step_cond, bio_step_cond
+    jal             pthread_cond_broadcast
+    jmp             loop.begin.0
+loop.end.0:
+    ret
+```
