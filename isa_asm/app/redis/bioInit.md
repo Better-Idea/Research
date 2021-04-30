@@ -323,3 +323,59 @@ proc bioSubmitJob:
     ret
 
 ```
+
+## C 源码
+```C
+typedef void lazy_free_fn(void *args[]);
+
+void bioCreateLazyFreeJob(lazy_free_fn free_fn, int arg_count, ...) {
+    va_list valist;
+    /* Allocate memory for the job structure and all required
+     * arguments */
+    struct bio_job *job = zmalloc(sizeof(*job) + sizeof(void *) * (arg_count));
+    job->free_fn = free_fn;
+
+    va_start(valist, arg_count);
+    for (int i = 0; i < arg_count; i++) {
+        job->free_args[i] = va_arg(valist, void *);
+    }
+    va_end(valist);
+    bioSubmitJob(BIO_LAZY_FREE, job);
+}
+
+```
+
+## Mix-C ISA
+```
+proc bioCreateLazyFreeJob:
+    # keep 指令占用的空间是独立于栈内存
+    keep.emit       a0.free_fn, a1.arg_count
+    shl             rt.arg_count, a1.arg_count, 3
+    imm
+    add             rt.bytes, rt.arg_count, sizeof(bio_job)
+    movqq           a0.bytes, rt.bytes
+    jal             zmalloc
+    rcv.emit        a0.free_fn, a1.arg_count
+    imm
+    add             job.free_fn, ret.job, 16
+    imm
+    add             job.free_args, ret.job, 24
+    stq             a0.free_fn, [job.free_fn]
+
+    # 读取栈帧地址，栈是向高地址生长的
+    rdstk           valist
+loop.begin,0:
+    sub             arg_count, 1
+    ifge            loop.end.0
+    ldq             rt, [vallist]
+    stq             rt, [job.free_args]
+    add             job.free_args, 8
+    jmp             loop.begin,0
+loop.end.0:
+    movqqx          a0.BIO_LAZY_FREE, 2
+    movqq           a1.job, ret.job
+    jal             bioSubmitJob
+    ret
+```
+
+
