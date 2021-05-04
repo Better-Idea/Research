@@ -1,6 +1,6 @@
 # BIOINIT
 ## 引用
-redis/src/bio.c:bioInit 函数
+redis/src/bio.c
 
 ## C 源码
 ```C
@@ -35,9 +35,9 @@ void *bioProcessBackgroundJobs(void *arg);
 
 /* Initialize the background system, spawning the thread. */
 void bioInit(void) {
-    pthread_attr_t a0.attr;
+    pthread_attr_t attr;
     pthread_t thread;
-    size_t a1.stacksize;
+    size_t stacksize;
     int j;
 
     /* Initialization of state vars and objects */
@@ -50,18 +50,18 @@ void bioInit(void) {
     }
 
     /* Set the stack size as by default it may be small in some system */
-    pthread_attr_init(&a0.attr);
-    pthread_attr_getstacksize(&a0.attr,&a1.stacksize);
-    if (!a1.stacksize) a1.stacksize = 1; /* The world is full of Solaris Fixes */
-    while (a1.stacksize < REDIS_THREAD_STACK_SIZE) a1.stacksize *= 2;
-    pthread_attr_setstacksize(&a0.attr, a1.stacksize);
+    pthread_attr_init(&attr);
+    pthread_attr_getstacksize(&attr,&stacksize);
+    if (!stacksize) stacksize = 1; /* The world is full of Solaris Fixes */
+    while (stacksize < REDIS_THREAD_STACK_SIZE) stacksize *= 2;
+    pthread_attr_setstacksize(&attr, stacksize);
 
     /* Ready to spawn our threads. We use the single argument the thread
      * function accepts in order to pass the job ID the thread is
      * responsible of. */
     for (j = 0; j < BIO_NUM_OPS; j++) {
         void *arg = (void*)(unsigned long) j;
-        if (pthread_create(&thread,&a0.attr,bioProcessBackgroundJobs,arg) != 0) {
+        if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
             serverLog(LL_WARNING,"Fatal: Can't initialize Background Jobs.");
             exit(1);
         }
