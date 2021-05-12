@@ -3,6 +3,9 @@
 - 对比 Mix-C ASM 与 ARM Cortex-M3 ASM
 - ARM 平台开启 -Os 空间优化
 
+## 目标
+- 高性能+简洁紧凑
+
 ## 选节一
 **lvgl/src/lv_draw/lv_draw_arc.c**
 ```C
@@ -399,7 +402,7 @@ if.6:
     snew        ut.mask_angle_param, sizeof(lv_draw_mask_angle_param_t)
     movqq       u7.area, u0.area
     rcv         i0.center_x, i1.center_y
-    movqqx      a2.center_y, i1.center_x
+    movqqx      a2.center_y, i1.center_y
     movqqx      a1.center_x, i0.center_x
     movqq       a0.mask_angle_param, ut.mask_angle_param
     # movqq     a3.start_angle, u3.start_angle
@@ -533,7 +536,7 @@ if.8.1:
     movqq       a0.angle, u3.start_angle
     movqq       u3.round_area, ut.round_area
     keep.emit   u3.round_area, u7.dsc.round_start_end
-    shr         u12.dsc.round_start_end, 3
+    shr         u7.dsc.round_start_end, 3
     ifnc        if.10
     movqq       a0.angle, u4.end_angle
 if.10:
@@ -557,3 +560,11 @@ loop.begin.0:
 loop.end.0:
     ret
 ```
+
+## 分析报告
+- 局部变量会重复使用，如果途中调用了子函数可能会破坏当前寄存器上下文，寄存器中的数据将会在调用前或者在子函数内部倒到栈上。由于栈上还可能存了数据结构或中小规模的数组，而这些数据部分是冷数据，无论是缓存整个栈内存还是缓存靠近栈顶的栈内存都无法物尽其用，所以我们为寄存器单独提供高速缓存栈
+- jal 子函数调用指令支持 16bit 区域内绝对跳转，以及通过 16bit 立即数访问 2^15 - 1 个动态链接的函数
+- 一个函数调用了若干子函数，这些子函数期望的参数可能来自父函数的参数，但是每个子函数或许只要求个别参数，由于 ABI 要求参数从 a0~a15 这种顺序传递，所以需要重新排列参数位置，此时我们可能需要 rcv + mov 相互配合，这一块的指令可以考虑整合
+
+## 补充
+- 对于 A->B 这种通过指针访问成员时需要顺带判断是否为 null 值，存在判断 A 为 null 的模式和判断指向的 B 是否为 null 的模式
